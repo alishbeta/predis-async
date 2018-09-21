@@ -1,5 +1,5 @@
 {
-    "name": "predis/predis-async",
+    "name": "gorbunov/predis-async",
     "type": "library",
     "description": "Asynchronous version of Predis",
     "keywords": ["nosql", "redis", "predis"],
