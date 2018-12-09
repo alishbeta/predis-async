@@ -1,9 +1,9 @@
 {
-    "name": "gorbunov/predis-async",
+    "name": "adamasantares/predis-async",
     "type": "library",
     "description": "Asynchronous version of Predis",
     "keywords": ["nosql", "redis", "predis"],
-    "homepage": "http://github.com/nrk/predis-async",
+    "homepage": "https://github.com/KOYU-Tech/predis-async",
     "license": "MIT",
     "authors": [
         {
@@ -14,8 +14,8 @@
     ],
     "require": {
         "php": ">=5.4.0",
-        "predis/predis": "^1.0",
-        "react/event-loop": "~1.0",
+        "predis/predis": "^1.1",
+        "react/event-loop": "^0.4.3",
         "clue/redis-protocol": "~0.3"
     },
     "require-dev": {
