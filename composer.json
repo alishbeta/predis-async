@@ -1,9 +1,9 @@
 {
-    "name": "adamasantares/predis-async",
+    "name": "ashleigh-hopkins/predis-async",
     "type": "library",
     "description": "Asynchronous version of Predis",
     "keywords": ["nosql", "redis", "predis"],
-    "homepage": "https://github.com/KOYU-Tech/predis-async",
+    "homepage": "https://github.com/ashleigh-hopkins/predis-async",
     "license": "MIT",
     "authors": [
         {
