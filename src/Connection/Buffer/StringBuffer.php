@@ -31,10 +31,10 @@ class StringBuffer
     /**
      * {@inheritdoc}
      */
-    public function read($length)
+    public function consume($length)
     {
-        if (false === $buffer = substr($this->buffer, 0, $length)) {
-            return '';
+        if ('' !== $buffer = $this->read($length)) {
+            $this->buffer = substr($this->buffer, strlen($buffer)) ?: '';
         }
 
         return $buffer;
@@ -43,10 +43,10 @@ class StringBuffer
     /**
      * {@inheritdoc}
      */
-    public function consume($length)
+    public function read($length)
     {
-        if ('' !== $buffer = $this->read($length)) {
-            $this->buffer = substr($this->buffer, strlen($buffer)) ?: '';
+        if (false === $buffer = substr($this->buffer, 0, $length)) {
+            return '';
         }
 
         return $buffer;

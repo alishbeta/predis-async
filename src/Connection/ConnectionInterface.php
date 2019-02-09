@@ -14,6 +14,7 @@ namespace Predis\Async\Connection;
 use Predis\Command\CommandInterface;
 use Predis\Connection\ParametersInterface;
 use React\EventLoop\LoopInterface;
+use React\Promise\PromiseInterface;
 
 /**
  * Defines a connection object used to communicate asynchronously with Redis.
@@ -25,12 +26,14 @@ interface ConnectionInterface
     /**
      * Opens the connection to Redis.
      *
-     * @param callable $callback Callable invoked when the connection is established.
+     * @return PromiseInterface
      */
-    public function connect(callable $callback);
+    public function connect();
 
     /**
      * Closes the connection to Redis.
+     *
+     * @return PromiseInterface
      */
     public function disconnect();
 
@@ -66,10 +69,10 @@ interface ConnectionInterface
      * Writes a request for the given command over the connection and reads back
      * the response returned by Redis firing the user-provided callback.
      *
-     * @param CommandInterface $command  Redis command.
-     * @param callable         $callback Callback.
+     * @param CommandInterface $command Redis command.
+     * @return PromiseInterface
      */
-    public function executeCommand(CommandInterface $command, callable $callback);
+    public function executeCommand(CommandInterface $command);
 
     /**
      * Writes the buffer to a writable network streams.

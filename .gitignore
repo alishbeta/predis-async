@@ -2,3 +2,4 @@
 phpunit.xml
 experiments/
 vendor/
+.idea/

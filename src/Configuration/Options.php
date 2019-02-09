@@ -20,7 +20,7 @@ use Predis\Configuration\ProfileOption;
  * values using a mini-DI container approach.
  *
  * @property-read mixed eventloop Event loop instance.
- * @property-read bool  phpiredis Use phpiredis (only when available).
+ * @property-read bool phpiredis Use phpiredis (only when available).
  * @property-read mixed prefix    Key prefixing strategy using the given prefix.
  * @property-read mixed profile   Server profile.
  *
@@ -34,8 +34,8 @@ class Options extends BaseOptions
     protected function getHandlers()
     {
         return array(
-            'profile'   => new ProfileOption(),
-            'prefix'    => new PrefixOption(),
+            'profile' => new ProfileOption(),
+            'prefix' => new PrefixOption(),
             'eventloop' => new EventLoopOption(),
             'phpiredis' => new PhpiredisOption(),
         );

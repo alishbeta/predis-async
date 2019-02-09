@@ -11,33 +11,29 @@
 
 namespace Predis\Async;
 
-use Predis\ClientException;
-use Predis\NotSupportedException;
-use Predis\Configuration\OptionsInterface;
-use Predis\Connection\Parameters;
-use Predis\Connection\ParametersInterface;
-use Predis\Command\CommandInterface;
-use Predis\Response\ResponseInterface;
 use Predis\Async\Connection\ConnectionInterface;
 use Predis\Async\Connection\PhpiredisStreamConnection;
 use Predis\Async\Connection\StreamConnection;
+use Predis\ClientException;
+use Predis\Command\CommandInterface;
+use Predis\Configuration\OptionsInterface;
+use Predis\Connection\Parameters;
+use Predis\Connection\ParametersInterface;
+use Predis\NotSupportedException;
+use Predis\Response\ResponseInterface;
 use React\EventLoop\LoopInterface;
+use React\Promise\PromiseInterface;
 
-/**
- *  Client class used for connecting and executing commands on Redis.
- *
- * @author Daniele Alessandri <suppakilla@gmail.com>
- */
-class Client
+class Client implements ClientInterface
 {
     const VERSION = '0.3.0-dev';
-
-    private $profile;
     protected $connection;
+    private $profile;
+    private $options;
 
     /**
      * @param mixed $parameters Connection parameters.
-     * @param mixed $options    Options to configure some behaviours of the client.
+     * @param mixed $options Options to configure some behaviours of the client.
      */
     public function __construct($parameters = null, $options = null)
     {
@@ -73,27 +69,11 @@ class Client
     }
 
     /**
-     * Creates an instance of connection parameters.
-     *
-     * @param mixed $parameters Connection parameters.
-     *
-     * @return ParametersInterface
-     */
-    protected function createParameters($parameters)
-    {
-        if ($parameters instanceof ParametersInterface) {
-            return $parameters;
-        }
-
-        return Parameters::create($parameters);
-    }
-
-    /**
      * Initializes a connection from various types of arguments or returns the
      * passed object if it implements Predis\Connection\ConnectionInterface.
      *
-     * @param mixed            $parameters Connection parameters or instance.
-     * @param OptionsInterface $options    Client options.
+     * @param mixed $parameters Connection parameters or instance.
+     * @param OptionsInterface $options Client options.
      *
      * @return ConnectionInterface
      */
@@ -124,10 +104,26 @@ class Client
     }
 
     /**
+     * Creates an instance of connection parameters.
+     *
+     * @param mixed $parameters Connection parameters.
+     *
+     * @return ParametersInterface
+     */
+    protected function createParameters($parameters)
+    {
+        if ($parameters instanceof ParametersInterface) {
+            return $parameters;
+        }
+
+        return Parameters::create($parameters);
+    }
+
+    /**
      * Sets the callback used to notify the client about connection errors.
      *
      * @param ConnectionInterface $connection Connection instance.
-     * @param callable            $callback   Callback for error event.
+     * @param callable $callback Callback for error event.
      */
     protected function setErrorCallback(ConnectionInterface $connection, callable $callback)
     {
@@ -136,71 +132,38 @@ class Client
         });
     }
 
-    /**
-     * Returns the client options specified upon initialization.
-     *
-     * @return OptionsInterface
-     */
     public function getOptions()
     {
         return $this->options;
     }
 
-    /**
-     * Returns the server profile used by the client.
-     *
-     * @return Predis\Profile\ProfileInterface;
-     */
     public function getProfile()
     {
         return $this->profile;
     }
 
-    /**
-     * Returns the underlying event loop.
-     *
-     * @return LoopInterface
-     */
     public function getEventLoop()
     {
         return $this->options->eventloop;
     }
 
-    /**
-     * Opens the connection to the server.
-     *
-     * @param callable $callback Callback for connection event.
-     */
-    public function connect(callable $callback)
+    public function connect()
     {
-        $this->connection->connect(function ($connection) use ($callback) {
-            call_user_func($callback, $this, $connection);
+        return $this->connection->connect()->then(function ($connection) {
+            return $this;
         });
     }
 
-    /**
-     * Closes the underlying connection from the server.
-     */
     public function disconnect()
     {
-        $this->connection->disconnect();
+        return $this->connection->disconnect();
     }
 
-    /**
-     * Returns the current state of the underlying connection.
-     *
-     * @return bool
-     */
     public function isConnected()
     {
         return $this->connection->isConnected();
     }
 
-    /**
-     * Returns the underlying connection instance.
-     *
-     * @return ConnectionInterface
-     */
     public function getConnection()
     {
         return $this->connection;
@@ -210,80 +173,37 @@ class Client
      * Creates a Redis command with the specified arguments and sends a request
      * to the server.
      *
-     * @param string $method    Command ID.
-     * @param array  $arguments Arguments for the command (optional callback as last argument).
+     * @param string $method Command ID.
+     * @param array $arguments Arguments for the command (optional callback as last argument).
      *
-     * @return mixed
+     * @return PromiseInterface
      */
     public function __call($method, $arguments)
     {
-        if (!is_callable($callback = array_pop($arguments))) {
-            $arguments[] = $callback;
-            $callback = function () { /* NOOP */ };
-        }
-
-        $this->executeCommand($this->createCommand($method, $arguments), $callback);
+        return $this->executeCommand($this->createCommand($method, $arguments));
     }
 
-    /**
-     * Creates a new instance of the specified Redis command.
-     *
-     * @param string $method    Command ID.
-     * @param array  $arguments Arguments for the command.
-     *
-     * @return CommandInterface
-     */
+    public function executeCommand(CommandInterface $command)
+    {
+        return $this->connection->executeCommand($command)
+            ->then(function ($response) use ($command) {
+                if ($command && !$response instanceof ResponseInterface) {
+                    $response = $command->parseResponse($response);
+                }
+                return $response;
+            });
+    }
+
     public function createCommand($method, $arguments = [])
     {
         return $this->profile->createCommand($method, $arguments);
     }
 
-    /**
-     * Executes the specified Redis command.
-     *
-     * @param CommandInterface $command  Command instance.
-     * @param callable         $callback Response callback.
-     */
-    public function executeCommand(CommandInterface $command, callable $callback)
-    {
-        $this->connection->executeCommand($command, $this->wrapCallback($callback));
-    }
-
-    /**
-     * Wraps a command callback used to parse the raw response by adding more
-     * arguments that will be passed back to user code.
-     *
-     * @param callable $callback Response callback.
-     */
-    protected function wrapCallback(callable $callback)
-    {
-        return function ($response, $connection, $command) use ($callback) {
-            if ($command && !$response instanceof ResponseInterface) {
-                $response = $command->parseResponse($response);
-            }
-
-            call_user_func($callback, $response, $this, $command);
-        };
-    }
-
-    /**
-     * Creates a new transaction context.
-     *
-     * @return MultiExec
-     */
     public function transaction(/* arguments */)
     {
         return new Transaction\MultiExec($this);
     }
 
-    /**
-     * Creates a new monitor consumer.
-     *
-     * @param callable $callback  Callback invoked on each payload message.
-     * @param bool     $autostart Flag indicating if the consumer should be auto-started.
-     *
-     * @return Monitor\Consumer
-     */
     public function monitor(callable $callback, $autostart = true)
     {
         $monitor = new Monitor\Consumer($this, $callback);
@@ -295,14 +215,6 @@ class Client
         return $monitor;
     }
 
-    /**
-     * Creates a new pub/sub consumer.
-     *
-     * @param mixed    $channels List of channels for subscription.
-     * @param callable $callback Callback invoked on each payload message.
-     *
-     * @return PubSub\Consumer
-     */
     public function pubSubLoop($channels, callable $callback)
     {
         $pubsub = new PubSub\Consumer($this, $callback);
@@ -322,9 +234,6 @@ class Client
         return $pubsub;
     }
 
-    /**
-     * {@inheritdoc}
-     */
     public function pipeline(/* arguments */)
     {
         throw new NotSupportedException('Not yet implemented');

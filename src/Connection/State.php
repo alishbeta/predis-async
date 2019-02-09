@@ -21,71 +21,19 @@ use RuntimeException;
  */
 class State
 {
-    const DISCONNECTED   = 1;     // 0b00000001
-    const CONNECTING     = 2;     // 0b00000010
-    const CONNECTED      = 4;     // 0b00000100
+    const DISCONNECTED = 1;     // 0b00000001
+    const CONNECTING = 2;     // 0b00000010
+    const CONNECTED = 4;     // 0b00000100
     const STREAM_CONTEXT = 8;     // 0b00001000
 
-    const MULTIEXEC      = 20;    // 0b00010100
-    const MONITOR        = 40;    // 0b00101000
-    const PUBSUB         = 72;    // 0b01001000
+    const MULTIEXEC = 20;    // 0b00010100
+    const MONITOR = 40;    // 0b00101000
+    const PUBSUB = 72;    // 0b01001000
 
     protected $processCallback;
     protected $streamCallback;
 
     protected $state = self::DISCONNECTED;
-
-    /**
-     * Sets the current state value using the specified flags.
-     *
-     * @param int $flags Flags.
-     */
-    protected function setFlags($flags)
-    {
-        $this->state = $flags;
-    }
-
-    /**
-     * Returns the current state value.
-     *
-     * @return int
-     */
-    protected function getFlags()
-    {
-        return $this->state;
-    }
-
-    /**
-     * Checks if the specified flags are set in the current state value.
-     *
-     * @param int $flags Flags.
-     *
-     * @return bool
-     */
-    protected function checkFlags($flags)
-    {
-        return ($this->state & $flags) === $flags;
-    }
-
-    /**
-     * Sets the specified flags in the current state value.
-     *
-     * @param int $flags Flags.
-     */
-    protected function flag($flags)
-    {
-        $this->state |= $flags;
-    }
-
-    /**
-     * Unsets the specified flags from the current state value.
-     *
-     * @param int $flags Flags.
-     */
-    protected function unflag($flags)
-    {
-        $this->state &= ~$flags;
-    }
 
     /**
      * Switches the internal state to one of the supported states.
@@ -105,6 +53,16 @@ class State
     }
 
     /**
+     * Sets the current state value using the specified flags.
+     *
+     * @param int $flags Flags.
+     */
+    protected function setFlags($flags)
+    {
+        $this->state = $flags;
+    }
+
+    /**
      * Switches the internal state from a context to CONNECTED.
      */
     public function clearStreamingContext()
@@ -117,7 +75,7 @@ class State
      * Switches the internal state to one of the supported Redis contexts and
      * associates a callback to process streaming reply items.
      *
-     * @param int      $context  Context flag.
+     * @param int $context Context flag.
      * @param callable $callback Callable object.
      */
     public function setStreamingContext($context, callable $callback)
@@ -162,6 +120,18 @@ class State
     }
 
     /**
+     * Checks if the specified flags are set in the current state value.
+     *
+     * @param int $flags Flags.
+     *
+     * @return bool
+     */
+    protected function checkFlags($flags)
+    {
+        return ($this->state & $flags) === $flags;
+    }
+
+    /**
      * Returns a string with a mnemonic representation of the current state.
      *
      * @return string
@@ -193,5 +163,35 @@ class State
         }
 
         return 'UNKNOWN';
+    }
+
+    /**
+     * Returns the current state value.
+     *
+     * @return int
+     */
+    protected function getFlags()
+    {
+        return $this->state;
+    }
+
+    /**
+     * Sets the specified flags in the current state value.
+     *
+     * @param int $flags Flags.
+     */
+    protected function flag($flags)
+    {
+        $this->state |= $flags;
+    }
+
+    /**
+     * Unsets the specified flags from the current state value.
+     *
+     * @param int $flags Flags.
+     */
+    protected function unflag($flags)
+    {
+        $this->state &= ~$flags;
     }
 }

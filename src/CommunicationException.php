@@ -11,8 +11,8 @@
 
 namespace Predis\Async;
 
-use Predis\PredisException;
 use Predis\Async\Connection\ConnectionInterface;
+use Predis\PredisException;
 
 /**
  * Base exception class for asynchronous network-related errors.
@@ -24,13 +24,13 @@ abstract class CommunicationException extends PredisException
     private $connection;
 
     /**
-     * @param ConnectionInterface $connection     Connection that generated the exception.
-     * @param string              $message        Error message.
-     * @param int                 $code           Error code.
-     * @param \Exception          $innerException Inner exception for wrapping the original error.
+     * @param ConnectionInterface $connection Connection that generated the exception.
+     * @param string $message Error message.
+     * @param int $code Error code.
+     * @param \Exception $innerException Inner exception for wrapping the original error.
      */
     public function __construct(ConnectionInterface $connection,
-        $message = null, $code = null, \Exception $innerException = null)
+                                $message = null, $code = null, \Exception $innerException = null)
     {
         parent::__construct($message, $code, $innerException);
 

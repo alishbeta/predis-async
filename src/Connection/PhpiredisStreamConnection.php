@@ -16,6 +16,7 @@ use Predis\Connection\ParametersInterface;
 use Predis\Response\Error as ErrorResponse;
 use Predis\Response\Status as StatusResponse;
 use React\EventLoop\LoopInterface;
+use React\Promise\Deferred;
 
 class PhpiredisStreamConnection extends AbstractConnection
 {
@@ -29,16 +30,6 @@ class PhpiredisStreamConnection extends AbstractConnection
         parent::__construct($loop, $parameters);
 
         $this->initializeReader();
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function __destruct()
-    {
-        phpiredis_reader_destroy($this->reader);
-
-        parent::__destruct();
     }
 
     /**
@@ -79,6 +70,16 @@ class PhpiredisStreamConnection extends AbstractConnection
     /**
      * {@inheritdoc}
      */
+    public function __destruct()
+    {
+        phpiredis_reader_destroy($this->reader);
+
+        parent::__destruct();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function parseResponseBuffer($buffer)
     {
         phpiredis_reader_feed($reader = $this->reader, $buffer);
@@ -91,7 +92,7 @@ class PhpiredisStreamConnection extends AbstractConnection
     /**
      * {@inheritdoc}
      */
-    public function executeCommand(CommandInterface $command, callable $callback)
+    public function executeCommand(CommandInterface $command)
     {
         if ($this->buffer->isEmpty() && $stream = $this->getResource()) {
             $this->loop->addWriteStream($stream, $this->writableCallback);
@@ -101,6 +102,9 @@ class PhpiredisStreamConnection extends AbstractConnection
         array_unshift($cmdargs, $command->getId());
 
         $this->buffer->append(phpiredis_format_command($cmdargs));
-        $this->commands->enqueue([$command, $callback]);
+        $deferred = new Deferred();
+        $this->commands->enqueue([$command, $deferred]);
+
+        return $deferred->promise();
     }
 }

@@ -11,10 +11,15 @@
 
 namespace Predis\Async\Connection;
 
-use SplQueue;
 use Predis\Command\CommandInterface;
 use Predis\Connection\ParametersInterface;
+use Predis\Response\Error;
 use React\EventLoop\LoopInterface;
+use React\Promise\Deferred;
+use React\Promise\FulfilledPromise;
+use React\Promise\PromiseInterface;
+use React\Promise\RejectedPromise;
+use SplQueue;
 
 /**
  * Base class providing the common logic used by to communicate asynchronously
@@ -36,7 +41,7 @@ abstract class AbstractConnection implements ConnectionInterface
     protected $writableCallback = null;
 
     /**
-     * @param LoopInterface       $loop       Event loop instance.
+     * @param LoopInterface $loop Event loop instance.
      * @param ParametersInterface $parameters Initialization parameters for the connection.
      */
     public function __construct(LoopInterface $loop, ParametersInterface $parameters)
@@ -54,17 +59,6 @@ abstract class AbstractConnection implements ConnectionInterface
     }
 
     /**
-     * Disconnects from the server and destroys the underlying resource when
-     * PHP's garbage collector kicks in.
-     */
-    public function __destruct()
-    {
-        if ($this->isConnected()) {
-           $this->disconnect();
-        }
-    }
-
-    /**
      * Returns the callback used to handle commands and firing the appropriate
      * callbacks depending on the state of the connection.
      *
@@ -72,20 +66,24 @@ abstract class AbstractConnection implements ConnectionInterface
      */
     protected function getProcessCallback()
     {
-        return function ($state, $response) {
-            list($command, $callback) = $this->commands->dequeue();
+        return function (State $state, $response) {
+            /**
+             * @var CommandInterface $command
+             * @var Deferred $deferred
+             */
+            [$command, $deferred] = $this->commands->dequeue();
 
             switch ($command->getId()) {
                 case 'SUBSCRIBE':
                 case 'PSUBSCRIBE':
                     $wrapper = $this->getStreamingWrapperCreator();
-                    $callback = $wrapper($this, $callback);
+                    $callback = $wrapper($this, $deferred);
                     $state->setStreamingContext(State::PUBSUB, $callback);
                     break;
 
                 case 'MONITOR':
                     $wrapper = $this->getStreamingWrapperCreator();
-                    $callback = $wrapper($this, $callback);
+                    $callback = $wrapper($this, $deferred);
                     $state->setStreamingContext(State::MONITOR, $callback);
                     break;
 
@@ -99,8 +97,12 @@ abstract class AbstractConnection implements ConnectionInterface
                     goto process;
 
                 default:
-                process:
-                    call_user_func($callback, $response, $this, $command);
+                    process:
+                    if ($response instanceof Error) {
+                        $deferred->reject($response);
+                    } else {
+                        $deferred->resolve($response);
+                    }
                     break;
             }
         };
@@ -122,59 +124,47 @@ abstract class AbstractConnection implements ConnectionInterface
     }
 
     /**
-     * Creates the underlying resource used to communicate with Redis.
-     *
-     * @return mixed
+     * Disconnects from the server and destroys the underlying resource when
+     * PHP's garbage collector kicks in.
      */
-    protected function createResource(callable $callback)
+    public function __destruct()
     {
-        $parameters = $this->parameters;
-        $flags = STREAM_CLIENT_CONNECT | STREAM_CLIENT_ASYNC_CONNECT;
-
-        if ($parameters->scheme === 'unix') {
-            $uri = "unix://$parameters->path";
-        } else {
-            $uri = "$parameters->scheme://$parameters->host:$parameters->port";
+        if ($this->isConnected()) {
+            $this->disconnect();
         }
-
-        if (!$stream = @stream_socket_client($uri, $errno, $errstr, 0, $flags)) {
-            $this->onError(new ConnectionException($this, trim($errstr), $errno));
-
-            return;
-        }
-
-        stream_set_blocking($stream, 0);
-
-        $this->state->setState(State::CONNECTING);
-
-        $this->loop->addWriteStream($stream, function ($stream) use ($callback) {
-            if ($this->onConnect()) {
-                call_user_func($callback, $this);
-                $this->write();
-            }
-        });
-
-        $this->timeout = $this->armTimeoutMonitor(
-            $parameters->timeout ?: 5, $this->errorCallback ?: function () { }
-        );
-
-        return $stream;
     }
 
     /**
-     * Sets a timeout monitor to handle timeouts when connecting to Redis.
-     *
-     * @param float    $timeout  Timeout value in seconds
-     * @param callable $callback Callback invoked upon timeout.
+     * {@inheritdoc}
      */
-    protected function armTimeoutMonitor($timeout, callable $callback)
+    public function isConnected()
     {
-        $timer = $this->loop->addTimer($timeout, function ($timer) use ($callback) {
-            $this->disconnect();
-            call_user_func($callback, $this, new ConnectionException($this, 'Connection timed out'));
+        return isset($this->stream) && stream_socket_get_name($this->stream, true) !== false;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function disconnect()
+    {
+        $deferred = new Deferred();
+        $promise = $deferred->promise();
+        $this->disarmTimeoutMonitor();
+
+        $this->loop->futureTick(function () use ($deferred) {
+            if (isset($this->stream)) {
+                $this->loop->removeReadStream($this->stream);
+                $this->loop->removeWriteStream($this->stream);
+                $this->state->setState(State::DISCONNECTED);
+                $this->buffer->reset();
+
+                unset($this->stream);
+            }
+
+            $deferred->resolve();
         });
 
-        return $timer;
+        return $promise;
     }
 
     /**
@@ -191,85 +181,59 @@ abstract class AbstractConnection implements ConnectionInterface
     /**
      * {@inheritdoc}
      */
-    public function isConnected()
-    {
-        return isset($this->stream) && stream_socket_get_name($this->stream, true) !== false;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function connect(callable $callback)
+    public function connect()
     {
         if (!$this->isConnected()) {
-            $this->stream = $this->createResource($callback);
+            return $this->createResource();
         }
+
+        return new FulfilledPromise($this);
     }
 
     /**
-     * {@inheritdoc}
+     * Creates the underlying resource used to communicate with Redis.
+     *
+     * @return PromiseInterface
+     * @throws \Exception
      */
-    public function disconnect()
+    protected function createResource()
     {
-        $this->disarmTimeoutMonitor();
+        $parameters = $this->parameters;
+        $flags = STREAM_CLIENT_CONNECT | STREAM_CLIENT_ASYNC_CONNECT;
 
-        $this->loop->futureTick(function () {
-            if (isset($this->stream)) {
-                $this->loop->removeReadStream($this->stream);
-                $this->loop->removeWriteStream($this->stream);
-                $this->state->setState(State::DISCONNECTED);
-                $this->buffer->reset();
+        if ($parameters->scheme === 'unix') {
+            $uri = "unix://$parameters->path";
+        } else {
+            $uri = "$parameters->scheme://$parameters->host:$parameters->port";
+        }
 
-                unset($this->stream);
+        if (!$stream = @stream_socket_client($uri, $errno, $errstr, 0, $flags)) {
+            $e = new ConnectionException($this, trim($errstr), $errno);
+            $this->onError($e);
+            return new RejectedPromise($e);
+        }
+
+        stream_set_blocking($stream, 0);
+
+        $this->state->setState(State::CONNECTING);
+
+        $deferred = new Deferred();
+        $promise = $deferred->promise();
+
+        $this->loop->addWriteStream($stream, function ($stream) use ($deferred) {
+            if ($this->onConnect($deferred)) {
+                $this->write();
             }
         });
-    }
 
-    /**
-     * {@inheritdoc}
-     */
-    public function getResource()
-    {
-        if (isset($this->stream)) {
-            return $this->stream;
+        $this->timeout = $this->armTimeoutMonitor(
+            $parameters->timeout ?: 5, $this->errorCallback ?: function () {
         }
+        );
 
-        $this->stream = $this->createResource(function () { /* NOOP */ });
+        $this->stream = $stream;
 
-        return $this->stream;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function setErrorCallback(callable $callback)
-    {
-        $this->errorCallback = $callback;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function onConnect()
-    {
-        $stream = $this->getResource();
-
-        // The following code is a terrible hack but it seems to be the only way
-        // to detect connection refused errors with PHP's stream sockets. You
-        // should blame PHP for this, as usual.
-        if (stream_socket_get_name($stream, true) === false) {
-            return $this->onError(new ConnectionException($this, "Connection refused"));
-        }
-
-        $this->state->setState(State::CONNECTED);
-        $this->disarmTimeoutMonitor();
-
-        if ($this->buffer->isEmpty()) {
-            $this->loop->removeWriteStream($stream);
-            $this->loop->addReadStream($stream, $this->readableCallback);
-        }
-
-        return true;
+        return $promise;
     }
 
     /**
@@ -287,33 +251,48 @@ abstract class AbstractConnection implements ConnectionInterface
     }
 
     /**
-     * {@inheritdoc}
+     * @param Deferred $deferred
+     * @return bool
+     * @throws \Exception
      */
-    public function getParameters()
+    public function onConnect($deferred)
     {
-        return $this->parameters;
-    }
+        $stream = $this->getResource();
 
-    /**
-     * {@inheritdoc}
-     */
-    public function getEventLoop()
-    {
-        return $this->loop;
-    }
-
-    /**
-     * Returns the identifier for the connection.
-     *
-     * @return string
-     */
-    protected function getIdentifier()
-    {
-        if ($this->parameters->scheme === 'unix') {
-            return $this->parameters->path;
+        // The following code is a terrible hack but it seems to be the only way
+        // to detect connection refused errors with PHP's stream sockets. You
+        // should blame PHP for this, as usual.
+        if (stream_socket_get_name($stream, true) === false) {
+            $e = new ConnectionException($this, "Connection refused");
+            $deferred->reject($e);
+            return $this->onError();
         }
 
-        return "{$this->parameters->host}:{$this->parameters->port}";
+        $this->state->setState(State::CONNECTED);
+        $this->disarmTimeoutMonitor();
+
+        if ($this->buffer->isEmpty()) {
+            $this->loop->removeWriteStream($stream);
+            $this->loop->addReadStream($stream, $this->readableCallback);
+        }
+
+        $deferred->resolve($this);
+
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getResource()
+    {
+        if (isset($this->stream)) {
+            return $this->stream;
+        }
+
+        $this->createResource();
+
+        return $this->stream;
     }
 
     /**
@@ -336,6 +315,47 @@ abstract class AbstractConnection implements ConnectionInterface
         }
 
         $this->buffer->discard(min($ret, strlen($buffer)));
+    }
+
+    /**
+     * Sets a timeout monitor to handle timeouts when connecting to Redis.
+     *
+     * @param float $timeout Timeout value in seconds
+     * @param callable $callback Callback invoked upon timeout.
+     * @return \React\EventLoop\TimerInterface
+     */
+    protected function armTimeoutMonitor($timeout, callable $callback)
+    {
+        $timer = $this->loop->addTimer($timeout, function ($timer) use ($callback) {
+            $this->disconnect();
+            call_user_func($callback, $this, new ConnectionException($this, 'Connection timed out'));
+        });
+
+        return $timer;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function setErrorCallback(callable $callback)
+    {
+        $this->errorCallback = $callback;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getParameters()
+    {
+        return $this->parameters;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getEventLoop()
+    {
+        return $this->loop;
     }
 
     /**
@@ -363,7 +383,7 @@ abstract class AbstractConnection implements ConnectionInterface
     /**
      * {@inheritdoc}
      */
-    abstract public function executeCommand(CommandInterface $command, callable $callback);
+    abstract public function executeCommand(CommandInterface $command);
 
     /**
      * {@inheritdoc}
@@ -371,5 +391,19 @@ abstract class AbstractConnection implements ConnectionInterface
     public function __toString()
     {
         return $this->getIdentifier();
+    }
+
+    /**
+     * Returns the identifier for the connection.
+     *
+     * @return string
+     */
+    protected function getIdentifier()
+    {
+        if ($this->parameters->scheme === 'unix') {
+            return $this->parameters->path;
+        }
+
+        return "{$this->parameters->host}:{$this->parameters->port}";
     }
 }

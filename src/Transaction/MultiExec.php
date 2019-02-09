@@ -11,11 +11,12 @@
 
 namespace Predis\Async\Transaction;
 
-use RuntimeException;
-use SplQueue;
+use Predis\Async\Client;
 use Predis\Response\ResponseInterface;
 use Predis\Response\Status as StatusResponse;
-use Predis\Async\Client;
+use React\Promise\PromiseInterface;
+use RuntimeException;
+use SplQueue;
 
 /**
  * Client-side abstraction of a Redis transaction based on MULTI / EXEC.
@@ -25,6 +26,7 @@ use Predis\Async\Client;
 class MultiExec
 {
     protected $client;
+    private $commands;
 
     /**
      * @param Client $client Client instance.
@@ -44,7 +46,7 @@ class MultiExec
     {
         $command = $this->client->createCommand('MULTI');
 
-        $this->client->executeCommand($command, function ($response) {
+        $this->client->executeCommand($command)->then(function ($response) {
             if (false === $response) {
                 throw new RuntimeException('Could not initialize a MULTI / EXEC transaction');
             }
@@ -54,17 +56,17 @@ class MultiExec
     /**
      * Dynamically invokes a Redis command with the specified arguments.
      *
-     * @param string $method    Command ID.
-     * @param array  $arguments Arguments for the command.
+     * @param string $method Command ID.
+     * @param array $arguments Arguments for the command.
      *
-     * @return MultiExecContext
+     * @return MultiExec
      */
     public function __call($method, $arguments)
     {
         $commands = $this->commands;
         $command = $this->client->createCommand($method, $arguments);
 
-        $this->client->executeCommand($command, function ($response, $_, $command) use ($commands) {
+        $this->client->executeCommand($command)->then(function ($response) use ($command, $commands) {
             if (!$response instanceof StatusResponse || $response != 'QUEUED') {
                 throw new RuntimeException('Unexpected response in MULTI / EXEC [expected +QUEUED]');
             }
@@ -76,21 +78,31 @@ class MultiExec
     }
 
     /**
+     * This method is an alias for execute().
+     *
+     * @return PromiseInterface
+     */
+    public function exec()
+    {
+        return $this->execute();
+    }
+
+    /**
      * Handles the actual execution of the whole transaction.
      *
-     * @param callable $callback Callback invoked after execution.
+     * @return PromiseInterface
      */
-    public function execute(callable $callback)
+    public function execute()
     {
         $commands = $this->commands;
-        $command  = $this->client->createCommand('EXEC');
+        $command = $this->client->createCommand('EXEC');
 
-        $this->client->executeCommand($command, function ($responses, $client) use ($commands, $callback) {
+        return $this->client->executeCommand($command)->then(function ($responses) use ($commands) {
             $size = count($responses);
             $processed = [];
 
             for ($i = 0; $i < $size; $i++) {
-                $command  = $commands->dequeue();
+                $command = $commands->dequeue();
                 $response = $responses[$i];
 
                 unset($responses[$i]);
@@ -102,17 +114,7 @@ class MultiExec
                 $processed[$i] = $response;
             }
 
-            call_user_func($callback, $processed, $client);
+            return $processed;
         });
-    }
-
-    /**
-     * This method is an alias for execute().
-     *
-     * @param callable $callback Callback invoked after execution.
-     */
-    public function exec(callable $callback)
-    {
-        $this->execute($callback);
     }
 }

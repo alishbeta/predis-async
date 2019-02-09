@@ -11,19 +11,29 @@
 
 namespace Predis\Async\Connection;
 
+use Clue\Redis\Protocol\Model\ErrorReply;
+use Clue\Redis\Protocol\Model\StatusReply;
+use Clue\Redis\Protocol\Parser\ParserInterface;
+use Clue\Redis\Protocol\Parser\ResponseParser;
+use Clue\Redis\Protocol\Serializer\RecursiveSerializer;
+use Clue\Redis\Protocol\Serializer\SerializerInterface;
 use Predis\Command\CommandInterface;
 use Predis\Connection\ParametersInterface;
 use Predis\Response\Error as ErrorResponse;
 use Predis\Response\Status as StatusResponse;
-use Clue\Redis\Protocol\Model\StatusReply;
-use Clue\Redis\Protocol\Model\ErrorReply;
-use Clue\Redis\Protocol\Parser\ResponseParser;
-use Clue\Redis\Protocol\Serializer\RecursiveSerializer;
 use React\EventLoop\LoopInterface;
+use React\Promise\Deferred;
 
 class StreamConnection extends AbstractConnection
 {
+    /**
+     * @var ParserInterface
+     */
     protected $parser;
+
+    /**
+     * @var SerializerInterface
+     */
     protected $serializer;
 
     /**
@@ -76,7 +86,7 @@ class StreamConnection extends AbstractConnection
     /**
      * {@inheritdoc}
      */
-    public function executeCommand(CommandInterface $command, callable $callback)
+    public function executeCommand(CommandInterface $command)
     {
         if ($this->buffer->isEmpty() && $stream = $this->getResource()) {
             $this->loop->addWriteStream($stream, $this->writableCallback);
@@ -85,6 +95,9 @@ class StreamConnection extends AbstractConnection
         $request = $this->serializer->getRequestMessage($command->getId(), $command->getArguments());
 
         $this->buffer->append($request);
-        $this->commands->enqueue([$command, $callback]);
+        $deferred = new Deferred();
+        $this->commands->enqueue([$command, $deferred]);
+
+        return $deferred->promise();
     }
 }
