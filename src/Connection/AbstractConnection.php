@@ -265,7 +265,7 @@ abstract class AbstractConnection implements ConnectionInterface
         if (stream_socket_get_name($stream, true) === false) {
             $e = new ConnectionException($this, "Connection refused");
             $deferred->reject($e);
-            return $this->onError();
+            return $this->onError($e);
         }
 
         $this->state->setState(State::CONNECTED);
