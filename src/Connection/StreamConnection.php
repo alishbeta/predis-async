@@ -23,6 +23,7 @@ use Predis\Response\Error as ErrorResponse;
 use Predis\Response\Status as StatusResponse;
 use React\EventLoop\LoopInterface;
 use React\Promise\Deferred;
+use function React\Promise\reject;
 
 class StreamConnection extends AbstractConnection
 {
@@ -88,6 +89,10 @@ class StreamConnection extends AbstractConnection
      */
     public function executeCommand(CommandInterface $command)
     {
+        if ($this->lastError) {
+            return reject($this->lastError);
+        }
+
         if ($this->buffer->isEmpty() && $stream = $this->getResource()) {
             $this->loop->addWriteStream($stream, $this->writableCallback);
         }

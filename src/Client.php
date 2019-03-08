@@ -96,10 +96,6 @@ class Client implements ClientInterface
             $connection = new StreamConnection($eventloop, $parameters);
         }
 
-        if (isset($options->on_error)) {
-            $this->setErrorCallback($connection, $options->on_error);
-        }
-
         return $connection;
     }
 
@@ -117,19 +113,6 @@ class Client implements ClientInterface
         }
 
         return Parameters::create($parameters);
-    }
-
-    /**
-     * Sets the callback used to notify the client about connection errors.
-     *
-     * @param ConnectionInterface $connection Connection instance.
-     * @param callable $callback Callback for error event.
-     */
-    protected function setErrorCallback(ConnectionInterface $connection, callable $callback)
-    {
-        $connection->setErrorCallback(function ($connection, $exception) use ($callback) {
-            call_user_func($callback, $this, $exception, $connection);
-        });
     }
 
     public function getOptions()
@@ -180,6 +163,7 @@ class Client implements ClientInterface
      */
     public function __call($method, $arguments)
     {
+        // \Log::warning("[RedisAsync]: {$method}", ['params' => $arguments]);
         return $this->executeCommand($this->createCommand($method, $arguments));
     }
 

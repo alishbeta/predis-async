@@ -19,6 +19,8 @@ use React\Promise\Deferred;
 use React\Promise\FulfilledPromise;
 use React\Promise\PromiseInterface;
 use React\Promise\RejectedPromise;
+use function React\Promise\Timer\timeout;
+use React\Promise\Timer\TimeoutException;
 use SplQueue;
 
 /**
@@ -36,9 +38,9 @@ abstract class AbstractConnection implements ConnectionInterface
     protected $commands;
     protected $state;
     protected $timeout = null;
-    protected $errorCallback = null;
     protected $readableCallback = null;
     protected $writableCallback = null;
+    protected $lastError = null;
 
     /**
      * @param LoopInterface $loop Event loop instance.
@@ -149,7 +151,6 @@ abstract class AbstractConnection implements ConnectionInterface
     {
         $deferred = new Deferred();
         $promise = $deferred->promise();
-        $this->disarmTimeoutMonitor();
 
         $this->loop->futureTick(function () use ($deferred) {
             if (isset($this->stream)) {
@@ -165,17 +166,6 @@ abstract class AbstractConnection implements ConnectionInterface
         });
 
         return $promise;
-    }
-
-    /**
-     * Stops the timeout monitor if initialized.
-     */
-    protected function disarmTimeoutMonitor()
-    {
-        if (isset($this->timeout)) {
-            $this->loop->cancelTimer($this->timeout);
-            $this->timeout = null;
-        }
     }
 
     /**
@@ -208,9 +198,7 @@ abstract class AbstractConnection implements ConnectionInterface
         }
 
         if (!$stream = @stream_socket_client($uri, $errno, $errstr, 0, $flags)) {
-            $e = new ConnectionException($this, trim($errstr), $errno);
-            $this->onError($e);
-            return new RejectedPromise($e);
+            return $this->onError(new ConnectionException($this, trim($errstr), $errno));
         }
 
         stream_set_blocking($stream, 0);
@@ -221,19 +209,24 @@ abstract class AbstractConnection implements ConnectionInterface
         $promise = $deferred->promise();
 
         $this->loop->addWriteStream($stream, function ($stream) use ($deferred) {
-            if ($this->onConnect($deferred)) {
+            $this->onConnect()->then(function($result) use ($deferred) {
+                $deferred->resolve($this);
                 $this->write();
-            }
+            }, function ($e) use($deferred) {
+                $deferred->reject($e);
+            });
         });
-
-        $this->timeout = $this->armTimeoutMonitor(
-            $parameters->timeout ?: 5, $this->errorCallback ?: function () {
-        }
-        );
 
         $this->stream = $stream;
 
-        return $promise;
+        return timeout($promise, $parameters->timeout ?: 5, $this->loop)
+            ->otherwise(function($e) {
+                if ($e instanceof TimeoutException) {
+                    return $this->onError(new ConnectionException($this, 'Connection timed out'));
+                }
+
+                throw $e;
+            });
     }
 
     /**
@@ -241,21 +234,13 @@ abstract class AbstractConnection implements ConnectionInterface
      */
     protected function onError(\Exception $exception)
     {
-        $this->disconnect();
-
-        if (isset($this->errorCallback)) {
-            call_user_func($this->errorCallback, $this, $exception);
-        }
-
-        return false;
+        $this->lastError = $exception;
+        return $this->disconnect()->always(function() use ($exception) {
+            throw $exception;
+        });
     }
 
-    /**
-     * @param Deferred $deferred
-     * @return bool
-     * @throws \Exception
-     */
-    public function onConnect($deferred)
+    public function onConnect()
     {
         $stream = $this->getResource();
 
@@ -263,22 +248,18 @@ abstract class AbstractConnection implements ConnectionInterface
         // to detect connection refused errors with PHP's stream sockets. You
         // should blame PHP for this, as usual.
         if (stream_socket_get_name($stream, true) === false) {
-            $e = new ConnectionException($this, "Connection refused");
-            $deferred->reject($e);
-            return $this->onError($e);
+            return $this->onError(new ConnectionException($this, "Connection refused"));
         }
 
+        $this->lastError = null;
         $this->state->setState(State::CONNECTED);
-        $this->disarmTimeoutMonitor();
 
         if ($this->buffer->isEmpty()) {
             $this->loop->removeWriteStream($stream);
             $this->loop->addReadStream($stream, $this->readableCallback);
         }
 
-        $deferred->resolve($this);
-
-        return true;
+        return \React\Promise\resolve(true);
     }
 
     /**
@@ -315,31 +296,6 @@ abstract class AbstractConnection implements ConnectionInterface
         }
 
         $this->buffer->discard(min($ret, strlen($buffer)));
-    }
-
-    /**
-     * Sets a timeout monitor to handle timeouts when connecting to Redis.
-     *
-     * @param float $timeout Timeout value in seconds
-     * @param callable $callback Callback invoked upon timeout.
-     * @return \React\EventLoop\TimerInterface
-     */
-    protected function armTimeoutMonitor($timeout, callable $callback)
-    {
-        $timer = $this->loop->addTimer($timeout, function ($timer) use ($callback) {
-            $this->disconnect();
-            call_user_func($callback, $this, new ConnectionException($this, 'Connection timed out'));
-        });
-
-        return $timer;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function setErrorCallback(callable $callback)
-    {
-        $this->errorCallback = $callback;
     }
 
     /**
