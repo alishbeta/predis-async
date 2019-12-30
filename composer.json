@@ -1,9 +1,9 @@
 {
-    "name": "ashleigh-hopkins/predis-async",
+    "name": "vidoomymedia/predis-async",
     "type": "library",
     "description": "Asynchronous version of Predis",
     "keywords": ["nosql", "redis", "predis"],
-    "homepage": "https://github.com/ashleigh-hopkins/predis-async",
+    "homepage": "https://github.com/vidoomymedia/predis-async",
     "license": "MIT",
     "authors": [
         {
