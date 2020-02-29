@@ -8,7 +8,7 @@
 [![HHVM support][ico-hhvm]][link-hhvm]
 
 Note: we did this copy of [https://github.com/nrk/predis-async](nrk/predis-async) because original repository was abandoned.
-Install: composer require adamasantares/predis-async
+Install: composer require alishbeta/predis-async
 
 Asynchronous (non-blocking) version of [Predis](https://github.com/nrk/predis), the full-featured
 PHP client library for [Redis](http://redis.io), built on top of [React](http://reactphp.org/) to
